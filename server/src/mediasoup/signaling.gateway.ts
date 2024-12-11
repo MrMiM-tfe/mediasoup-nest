@@ -7,16 +7,26 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { MediasoupService } from './mediasoup.service'; // Make sure MediasoupService is properly configured
+import { AppData, Router, WebRtcTransport } from 'mediasoup/node/lib/types';
+
+interface IChannel {
+	router: Router<AppData>,
+	transports: Map<string, WebRtcTransport<AppData>>,
+	producers: Map<string, any>,
+	consumers: Map<string, any>,
+}
 
 @WebSocketGateway({ cors: true })
 export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnect {
 	@WebSocketServer()
 	server: Server;
 
-	private transports = new Map(); // Stores WebRTC transports
-	private producers = new Map(); // Stores producers (clients sending media)
-	private consumers = new Map(); // Stores consumers (clients receiving media)
-	private rooms = new Map(); // Stores rooms with routers and other media-specific data
+	// private newRooms: {}[]  = null
+	private channels: Record<string ,IChannel> = {}
+	// private transports = new Map(); // Stores WebRTC transports
+	// private producers = new Map(); // Stores producers (clients sending media)
+	// private consumers = new Map(); // Stores consumers (clients receiving media)
+	// private rooms = new Map(); // Stores rooms with routers and other media-specific data
 
 	constructor(private readonly mediasoupService: MediasoupService) {}
 
@@ -41,14 +51,19 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 	// Client requests router RTP capabilities (before connecting)
 	@SubscribeMessage('getRouterRtpCapabilities')
 	async handleGetRouterRtpCapabilities(client: Socket, payload: any) {
-		const roomId = payload.roomId;
-
-		if (!this.rooms.has(roomId)) {
+		const channelId = payload.channelId;
+		
+		if (!this.channels[channelId]) {
 			const router = await this.mediasoupService.initialize();
-			this.rooms.set(roomId, { router });
+			this.channels[channelId] = {
+				router: router,
+				transports: new Map(),
+				producers: new Map(),
+				consumers: new Map(),
+			};
 		}
 
-		const router = this.rooms.get(roomId).router;
+		const router = this.channels[channelId].router;
 
 		return router.rtpCapabilities;
 	}
@@ -56,13 +71,13 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 	// Create a WebRTC transport
 	@SubscribeMessage('createWebRtcTransport')
 	async handleCreateWebRtcTransport(client: Socket, payload: any) {
-		const roomId = payload.roomId;
-		const router = this.rooms.get(roomId).router;
+		const channelId = payload.channelId;
+		const router = this.channels[channelId].router;
 
 		const transportOptions = await this.mediasoupService.createTransportOptions();
 
 		const transport = await router.createWebRtcTransport(transportOptions);
-		this.transports.set(transport.id, transport);
+		this.channels[channelId].transports.set(transport.id, transport);
 
 		transport.on('dtlsstatechange', (dtlsState: string) => {
 			if (dtlsState === 'closed') {
@@ -81,9 +96,9 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 
 	@SubscribeMessage('connectTransport')
 	async handleConnectTransport(client: Socket, payload: any) {
-		const { transportId, dtlsParameters } = payload;
+		const { transportId, dtlsParameters, channelId } = payload;
 
-		const transport = this.transports.get(transportId);
+		const transport = this.channels[channelId].transports.get(transportId);
 		if (!transport) {
 			return 'ERROR';
 		}
@@ -95,20 +110,19 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 	// Produce media from the client
 	@SubscribeMessage('produce')
 	async handleProduce(client: Socket, payload: any, callback: Function) {
-		this.producers = new Map();
-		const { transportId, kind, rtpParameters, roomId } = payload;
-		const transport = this.transports.get(transportId);
+		const { transportId, kind, rtpParameters, channelId } = payload;
+
+		// reset the producers map (for testing)
+		// this.channels[channelId].producers = new Map();
+
+		const transport = this.channels[channelId].transports.get(transportId);
 
 		if (!transport) {
 			return callback({ error: 'Transport not found' });
 		}
 
 		const producer = await transport.produce({ kind, rtpParameters });
-		this.producers.set(producer.id, producer);
-
-		// Add the producer to the room so that other clients can consume it
-		const room = this.rooms.get(roomId);
-		room[producer.id] = producer;
+		this.channels[channelId].producers.set(producer.id, producer);
 
 		return producer.id;
 	}
@@ -116,21 +130,21 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 	// Consume media (receive from other producers)
 	@SubscribeMessage('consume')
 	async handleConsume(client: Socket, payload: any) {
-		this.consumers = new Map();
-		const { transportId, producerId, rtpCapabilities, roomId } = payload;
-		const transport = this.transports.get(transportId);
+		const { transportId, producerId, rtpCapabilities, channelId } = payload;
+		// reset the consumers map (for testing)
+		// this.channels[payload.channelId].consumers = new Map();
+		const transport = this.channels[channelId].transports.get(transportId);
 
 		if (!transport) {
 			return { error: 'Transport not found' };
 		}
 
-		const room = this.rooms.get(roomId);
-		const router = room.router;
-		const producer = room[producerId];
+		const router = this.channels[channelId].router;
+		// const producer = this.channels[channelId].producers.get(producerId);
 
 		// Check if client's rtpCapabilities can consume the producer
 		if (!router.canConsume({ producerId, rtpCapabilities })) {
-			return { error: 'Cannot consume' };
+			return { error: 'Cannot consume', producerId, rtpCapabilities };
 		}
 
 		// Create consumer
@@ -140,9 +154,8 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 			paused: true, // Consumer is created paused
 		});
 
-		this.consumers.set(consumer.id, consumer);
+		this.channels[channelId].consumers.set(consumer.id, consumer);
 
-		
 		// Consumer resume
 		consumer.resume();
 
@@ -155,33 +168,33 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 	}
 
 	// Client requests to close the transport
-	@SubscribeMessage('closeTransport')
-	handleCloseTransport(client: Socket, payload: any): void {
-		const { transportId } = payload;
-		const transport = this.transports.get(transportId);
+	// @SubscribeMessage('closeTransport')
+	// handleCloseTransport(client: Socket, payload: any): void {
+	// 	const { transportId } = payload;
+	// 	const transport = this.transports.get(transportId);
 
-		if (transport) {
-			transport.close();
-			this.transports.delete(transportId);
-		}
-	}
+	// 	if (transport) {
+	// 		transport.close();
+	// 		this.transports.delete(transportId);
+	// 	}
+	// }
 
 	@SubscribeMessage('getProducers')
 	handleGetProducers(client: Socket, payload: any): { id: string }[] {
-		const { roomId } = payload;
+		const { channelId } = payload;
 
-		// Check if the room exists
-		const room = this.rooms.get(roomId);
-		if (!room) {
-			return [];
-		}
+		const producers = this.channels[channelId].producers;
+		// console.log('producers', producers);
 
-		// Retrieve all producer IDs in the room
-		const producerIds = Object.keys(room)
-			.filter((key) => key !== 'router') // Exclude the router from the list
-			.map((producerId) => ({ id: producerId }));
+		return Array.from(producers.values()).map((producer) => ({
+			id: producer.id,
+		}));
+	}
 
-		return producerIds;
+	@SubscribeMessage('reset')
+	handleReset(client: Socket, payload: any): void {
+		this.channels = {}
+		console.log('reset');	
 	}
 
 	// Handle other signaling events, like handling errors or requesting available producers

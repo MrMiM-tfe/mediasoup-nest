@@ -24,12 +24,12 @@ let producer: mediasoupClient.types.Producer | null = null;
 
 const produce = async () => {
 	try {
-		socket.emit('getRouterRtpCapabilities', {roomId: 1}, async (routerRtpCapabilities: RouterRtpCapabilities) => {
+		socket.emit('getRouterRtpCapabilities', {channelId: 1}, async (routerRtpCapabilities: RouterRtpCapabilities) => {
 			device = new mediasoupClient.Device();
 			await device.load({ routerRtpCapabilities });
 
 			// Step 3: Request transport creation from the server
-			socket.emit('createWebRtcTransport', { forceTcp: false, roomId: 1 }, async (transportInfo: ServerTransportOptions) => {
+			socket.emit('createWebRtcTransport', { forceTcp: false, channelId: 1 }, async (transportInfo: ServerTransportOptions) => {
 				// Step 4: Create a transport on the client
 				console.log('Transport created:', transportInfo);
 				sendTransport = device!.createSendTransport(transportInfo);
@@ -39,7 +39,7 @@ const produce = async () => {
 					console.log('Transport connected');
 					socket.emit(
 						'connectTransport',
-						{ transportId: sendTransport!.id, dtlsParameters },
+						{ transportId: sendTransport!.id, dtlsParameters, channelId: 1 },
 						(resp: string) => {
 							console.log("connectTransport resp", resp)
 							if (resp === "SUCCESS") {
@@ -54,7 +54,7 @@ const produce = async () => {
 				// Handle transport 'produce' event for new producer
 				sendTransport.on('produce', (parameters, callback, errback) => {
 					console.log('Producing media');
-					socket.emit('produce', { transportId: sendTransport!.id, ...parameters, roomId: 1 }, (id: string) => {
+					socket.emit('produce', { transportId: sendTransport!.id, ...parameters, channelId: 1 }, (id: string) => {
 						callback({ id });
 					});
 				});
@@ -92,7 +92,7 @@ const produce = async () => {
 const consume = async () => {
 	try {
 		// Step 1: Get router RTP capabilities
-		socket.emit('getRouterRtpCapabilities', { roomId: 1 }, async (routerRtpCapabilities: RouterRtpCapabilities) => {
+		socket.emit('getRouterRtpCapabilities', { channelId: 1 }, async (routerRtpCapabilities: RouterRtpCapabilities) => {
 			// Initialize device if not already done
 			if (!device) {
 				device = new mediasoupClient.Device();
@@ -100,13 +100,13 @@ const consume = async () => {
 			}
 
 			// Step 2: Create a receiving transport
-			socket.emit('createWebRtcTransport', { forceTcp: false, roomId: 1 }, async (transportInfo: ServerTransportOptions) => {
+			socket.emit('createWebRtcTransport', { forceTcp: false, channelId: 1 }, async (transportInfo: ServerTransportOptions) => {
 				const recvTransport = device!.createRecvTransport(transportInfo);
 
 				recvTransport.on('connect', ({ dtlsParameters }, callback, errback) => {
 					socket.emit(
 						'connectTransport',
-						{ transportId: recvTransport.id, dtlsParameters },
+						{ transportId: recvTransport.id, dtlsParameters, channelId: 1 },
 						(resp: string) => {
 							if (resp === 'SUCCESS') {
 								callback();
@@ -118,7 +118,7 @@ const consume = async () => {
 				});
 
 				// Step 3: Request producers from the server
-				socket.emit('getProducers', { roomId: 1 }, async (producers: { id: string }[]) => {
+				socket.emit('getProducers', { channelId: 1 }, async (producers: { id: string }[]) => {
 					if (producers.length === 0) {
 						console.log('No producers available');
 						return;
@@ -131,7 +131,7 @@ const consume = async () => {
 							'consume',
 							{
 								transportId: recvTransport.id,
-								roomId: 1,
+								channelId: 1,
 								producerId: producer.id,
 								rtpCapabilities: device!.rtpCapabilities, // Send device RTP capabilities
 							},
@@ -192,6 +192,9 @@ function App() {
 			}}> log </button>
 			<button onClick={produce}>cam</button>
 			<button onClick={consume}>consume</button>
+			<button onClick={() => {
+				socket.emit("reset")
+			}}>reset</button>
 			<div className="local">
 				local video
 				<video id="localVideo" autoPlay muted></video>
