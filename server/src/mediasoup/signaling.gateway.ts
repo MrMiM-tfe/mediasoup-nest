@@ -30,13 +30,13 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 		console.log('Client disconnected:', client.id);
 	}
 
-    @SubscribeMessage('test')
-    async test(client: Socket, payload: any, callback: Function) {
-        console.log( typeof payload, typeof callback)
-        console.log( payload, callback)
-        return "hello from server"
-        // callback({test: 'test'})
-    }
+	@SubscribeMessage('test')
+	async test(client: Socket, payload: any, callback: Function) {
+		console.log(typeof payload, typeof callback);
+		console.log(payload, callback);
+		return 'hello from server';
+		// callback({test: 'test'})
+	}
 
 	// Client requests router RTP capabilities (before connecting)
 	@SubscribeMessage('getRouterRtpCapabilities')
@@ -71,7 +71,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 			}
 		});
 
-        return {
+		return {
 			id: transport.id,
 			iceParameters: transport.iceParameters,
 			iceCandidates: transport.iceCandidates,
@@ -79,22 +79,23 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 		};
 	}
 
-	@SubscribeMessage("connectTransport")
+	@SubscribeMessage('connectTransport')
 	async handleConnectTransport(client: Socket, payload: any) {
-		const {transportId, dtlsParameters} = payload
+		const { transportId, dtlsParameters } = payload;
 
-		const transport = this.transports.get(transportId)
+		const transport = this.transports.get(transportId);
 		if (!transport) {
-			return "ERROR"
+			return 'ERROR';
 		}
 
-		await transport.connect({dtlsParameters})
-		return "SUCCESS"
+		await transport.connect({ dtlsParameters });
+		return 'SUCCESS';
 	}
 
 	// Produce media from the client
 	@SubscribeMessage('produce')
 	async handleProduce(client: Socket, payload: any, callback: Function) {
+		this.producers = new Map();
 		const { transportId, kind, rtpParameters, roomId } = payload;
 		const transport = this.transports.get(transportId);
 
@@ -107,7 +108,6 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 
 		// Add the producer to the room so that other clients can consume it
 		const room = this.rooms.get(roomId);
-		console.log(room)
 		room[producer.id] = producer;
 
 		return producer.id;
@@ -115,12 +115,13 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 
 	// Consume media (receive from other producers)
 	@SubscribeMessage('consume')
-	async handleConsume(client: Socket, payload: any, callback: Function) {
+	async handleConsume(client: Socket, payload: any) {
+		this.consumers = new Map();
 		const { transportId, producerId, rtpCapabilities, roomId } = payload;
 		const transport = this.transports.get(transportId);
 
 		if (!transport) {
-			return callback({ error: 'Transport not found' });
+			return { error: 'Transport not found' };
 		}
 
 		const room = this.rooms.get(roomId);
@@ -129,7 +130,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 
 		// Check if client's rtpCapabilities can consume the producer
 		if (!router.canConsume({ producerId, rtpCapabilities })) {
-			return callback({ error: 'Cannot consume' });
+			return { error: 'Cannot consume' };
 		}
 
 		// Create consumer
@@ -141,15 +142,16 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 
 		this.consumers.set(consumer.id, consumer);
 
-		callback({
+		
+		// Consumer resume
+		consumer.resume();
+
+		return {
 			id: consumer.id,
 			producerId,
 			kind: consumer.kind,
 			rtpParameters: consumer.rtpParameters,
-		});
-
-		// Consumer resume
-		consumer.resume();
+		};
 	}
 
 	// Client requests to close the transport
@@ -162,6 +164,24 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 			transport.close();
 			this.transports.delete(transportId);
 		}
+	}
+
+	@SubscribeMessage('getProducers')
+	handleGetProducers(client: Socket, payload: any): { id: string }[] {
+		const { roomId } = payload;
+
+		// Check if the room exists
+		const room = this.rooms.get(roomId);
+		if (!room) {
+			return [];
+		}
+
+		// Retrieve all producer IDs in the room
+		const producerIds = Object.keys(room)
+			.filter((key) => key !== 'router') // Exclude the router from the list
+			.map((producerId) => ({ id: producerId }));
+
+		return producerIds;
 	}
 
 	// Handle other signaling events, like handling errors or requesting available producers
