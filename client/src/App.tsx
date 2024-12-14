@@ -148,35 +148,13 @@ const consume = async (setProducers: Dispatch<SetStateAction<{type:"video" | "au
 								const remoteStream = new MediaStream();
 								remoteStream.addTrack(consumer.track);
 
+
 								const producer = {
 									type: consumeParams.kind,
 									stream: remoteStream
 								}
 
 								setProducers(p => [...p, producer])
-
-								// if (consumeParams.kind === 'video') {
-	
-								// 	const remoteVideo = document.getElementById('remoteVideo') as HTMLVideoElement;
-								// 	if (remoteVideo) {
-								// 		remoteVideo.srcObject = remoteStream;
-								// 		remoteVideo.play().catch((error) => {
-								// 			console.warn('Error playing remote video:', error.message);
-								// 		});
-								// 	}
-								// }
-
-								// if (consumeParams.kind === 'audio') {
-								// 	const remoteAudio = document.getElementById('remoteAudio') as HTMLAudioElement;
-								// 	if (remoteAudio) {
-								// 		remoteAudio.srcObject = remoteStream;
-								// 		remoteAudio.play().catch((error) => {
-								// 			console.warn('Error playing remote audio:', error.message);
-								// 		});
-								// 	}
-								// }
-
-								// Attach the track to a MediaStream and play it in the video element
 							}
 						);
 					}
