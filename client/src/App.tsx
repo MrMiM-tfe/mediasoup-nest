@@ -1,7 +1,7 @@
 import './assets/styles/App.css';
 import * as mediasoupClient from 'mediasoup-client';
 import io from 'socket.io-client';
-import { useEffect, useRef } from 'react';
+import { Dispatch, SetStateAction, useEffect, useRef, useState } from 'react';
 
 interface ServerTransportOptions {
 	id: string;
@@ -89,7 +89,7 @@ const produce = async () => {
 	}
 };
 
-const consume = async () => {
+const consume = async (setProducers: Dispatch<SetStateAction<{type:"video" | "audio", stream: MediaStream}[]>>) => {
 	try {
 		// Step 1: Get router RTP capabilities
 		socket.emit('getRouterRtpCapabilities', { channelId: 1 }, async (routerRtpCapabilities: RouterRtpCapabilities) => {
@@ -148,26 +148,33 @@ const consume = async () => {
 								const remoteStream = new MediaStream();
 								remoteStream.addTrack(consumer.track);
 
-								if (consumeParams.kind === 'video') {
-	
-									const remoteVideo = document.getElementById('remoteVideo') as HTMLVideoElement;
-									if (remoteVideo) {
-										remoteVideo.srcObject = remoteStream;
-										remoteVideo.play().catch((error) => {
-											console.warn('Error playing remote video:', error.message);
-										});
-									}
+								const producer = {
+									type: consumeParams.kind,
+									stream: remoteStream
 								}
 
-								if (consumeParams.kind === 'audio') {
-									const remoteAudio = document.getElementById('remoteAudio') as HTMLAudioElement;
-									if (remoteAudio) {
-										remoteAudio.srcObject = remoteStream;
-										remoteAudio.play().catch((error) => {
-											console.warn('Error playing remote audio:', error.message);
-										});
-									}
-								}
+								setProducers(p => [...p, producer])
+
+								// if (consumeParams.kind === 'video') {
+	
+								// 	const remoteVideo = document.getElementById('remoteVideo') as HTMLVideoElement;
+								// 	if (remoteVideo) {
+								// 		remoteVideo.srcObject = remoteStream;
+								// 		remoteVideo.play().catch((error) => {
+								// 			console.warn('Error playing remote video:', error.message);
+								// 		});
+								// 	}
+								// }
+
+								// if (consumeParams.kind === 'audio') {
+								// 	const remoteAudio = document.getElementById('remoteAudio') as HTMLAudioElement;
+								// 	if (remoteAudio) {
+								// 		remoteAudio.srcObject = remoteStream;
+								// 		remoteAudio.play().catch((error) => {
+								// 			console.warn('Error playing remote audio:', error.message);
+								// 		});
+								// 	}
+								// }
 
 								// Attach the track to a MediaStream and play it in the video element
 							}
@@ -183,15 +190,19 @@ const consume = async () => {
 
 
 function App() {
+	const [producers, setProducers] = useState<{type:"video" | "audio", stream: MediaStream}[]>([])
+
+
 	return (
 		<div className="main">
 			<button onClick={() => {
 				console.log(device)
 				console.log(sendTransport)
 				console.log(producer)
+				socket.emit("log")
 			}}> log </button>
 			<button onClick={produce}>cam</button>
-			<button onClick={consume}>consume</button>
+			<button onClick={() => consume(setProducers)}>consume</button>
 			<button onClick={() => {
 				socket.emit("reset")
 			}}>reset</button>
@@ -200,9 +211,35 @@ function App() {
 				<video id="localVideo" autoPlay muted></video>
 			</div>
 			<div className="remote">
-				remote video
-				<video id="remoteVideo" autoPlay></video>
-				<audio id='remoteAudio' autoPlay></audio>
+				remote videos
+				{producers.map(producer => {
+					if (producer.type === "video") {
+						// return video element with the stream
+						return <video id="remoteVideo" autoPlay
+							ref={ref => {
+								if (ref) {
+									ref.srcObject = producer.stream;
+									ref.play().catch((error) => {
+										console.warn('Error playing remote video:', error.message);
+									});
+								}
+							}}
+						></video>
+					}
+					else if (producer.type === "audio") {
+						// return audio element with the stream
+						return <audio id="remoteAudio" autoPlay
+							ref={ref => {
+								if (ref) {
+									ref.srcObject = producer.stream;
+									ref.play().catch((error) => {
+										console.warn('Error playing remote audio:', error.message);
+									});
+								}
+							}}
+						></audio>
+					}
+				})}
 			</div>
 		</div>
 	);

@@ -80,8 +80,11 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 		this.channels[channelId].transports.set(transport.id, transport);
 
 		transport.on('dtlsstatechange', (dtlsState: string) => {
+			console.log("dtlsstatechange", dtlsState, transport.id)
 			if (dtlsState === 'closed') {
 				transport.close();
+				// remove transport after disconnect
+				this.channels[channelId].transports.delete(transport.id)
 				console.log('Transport closed:', transport.id);
 			}
 		});
@@ -122,6 +125,12 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 		}
 
 		const producer = await transport.produce({ kind, rtpParameters });
+
+		producer.on("transportclose", () => {
+			this.channels[channelId].producers.delete(producer.id)
+			console.log(this.channels)
+		})
+
 		this.channels[channelId].producers.set(producer.id, producer);
 
 		return producer.id;
@@ -153,6 +162,16 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 			rtpCapabilities,
 			paused: true, // Consumer is created paused
 		});
+
+		consumer.on("transportclose", () => {
+			console.log("consume end do to transport close")
+			this.channels[channelId].consumers.delete(consumer.id)
+		})
+
+		consumer.on("producerclose", () => {
+			console.log("consume ended duo to producer close")
+			this.channels[channelId].consumers.delete(consumer.id)
+		})
 
 		this.channels[channelId].consumers.set(consumer.id, consumer);
 
@@ -195,6 +214,12 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 	handleReset(client: Socket, payload: any): void {
 		this.channels = {}
 		console.log('reset');	
+	}
+
+	// log
+	@SubscribeMessage('log')
+	handleLog(client: Socket, payload: any): void {
+		console.log(this.channels);
 	}
 
 	// Handle other signaling events, like handling errors or requesting available producers
